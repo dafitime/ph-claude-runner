@@ -1,0 +1,32 @@
+name: Claude job
+
+# The Prickled Herald site queues a Claude job and starts this with its id. Claude Code runs it on the owner's
+# Claude subscription (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`) and the answer goes straight back to
+# the site. Job content is fetched at run time and never printed here.
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "claude_jobs id on the site"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 && claude --version
+      - name: Run the job
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          JOB_ID: ${{ inputs.job }}
+        run: node run.mjs
