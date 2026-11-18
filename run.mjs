@@ -26,9 +26,11 @@ try {
   }
   if (job.images.length) prompt += `\n\nThe images are the files img1.jpg to img${job.images.length}.jpg in the current folder. Look at every one with the Read tool before you answer.`;
 
+  const web = job.tool === "fact_check";             // the fact check searches the web
+  const tools = [...(job.images.length ? ["Read"] : []), ...(web ? ["WebSearch"] : [])];
   const args = ["-p", "--output-format", "json", "--system-prompt-file", "system.txt",
-    "--json-schema", JSON.stringify(job.schema), "--max-turns", String(job.images.length + 6)];
-  if (job.images.length) args.push("--tools", "Read", "--allowedTools", "Read");
+    "--json-schema", JSON.stringify(job.schema), "--max-turns", String(job.images.length + (web ? 20 : 6))];
+  if (tools.length) args.push("--tools", tools.join(","), "--allowedTools", tools.join(","));
   else args.push("--tools", "");
   if (job.model) args.push("--model", job.model);
   if (job.effort) args.push("--effort", job.effort);
