@@ -7,11 +7,21 @@ const SITE = "https://prickledherald.com";
 const id = String(process.env.JOB_ID || "").replace(/\D/g, "");
 const url = `${SITE}/api/v1/claude-jobs/${id}`;
 const auth = { Authorization: `Bearer ${process.env.RUNNER_KEY}` };
-const post = body => fetch(url, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+// a dropped connection while posting back lost a finished script (Nov 19 2026: "fetch failed" twice), so it retries
+const post = async body => {
+  for (let k = 0; ; k++) {
+    try { return await fetch(url, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+    catch (e) { if (k >= 4) throw e; console.log(`post back failed (${e.message}), retrying`); await new Promise(r => setTimeout(r, 3000 * (k + 1))); }
+  }
+};
 
 try {
   if (!id) throw new Error("no job id");
-  const r = await fetch(url, { headers: auth });
+  let r;
+  for (let k = 0; ; k++) {
+    try { r = await fetch(url, { headers: auth }); break; }
+    catch (e) { if (k >= 4) throw e; console.log(`fetch job failed (${e.message}), retrying`); await new Promise(res => setTimeout(res, 3000 * (k + 1))); }
+  }
   const job = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`fetch job: ${job.error || r.status}`);
   console.log(`job ${id}: ${job.tool} (${job.model || "default model"}), ${job.images.length} image(s)`);
