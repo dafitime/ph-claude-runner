@@ -91,7 +91,7 @@ jobs:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           PH_API_TOKEN: ${{ secrets.PH_API_TOKEN }}
         run: |
-          SLUG="scene${GITHUB_RUN_NUMBER}"; LOG="$RUNNER_TEMP/render.log"
+          SLUG="pr${GITHUB_RUN_NUMBER}"   # not "scene<n>": this repo's run numbers restarted at 1; LOG="$RUNNER_TEMP/render.log"
           echo "REEL_SLUG=$SLUG" >> "$GITHUB_ENV"
           ARGS=(-C "work/$SLUG" --slug "$SLUG" --scenes "@$RUNNER_TEMP/scenes.json")
           ART="$(cat "$RUNNER_TEMP/article.txt")"; [ -n "$ART" ] && ARGS+=(--article "$ART")
