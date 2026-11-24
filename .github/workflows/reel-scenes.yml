@@ -1,0 +1,126 @@
+name: Make a scene reel
+
+# Reel renders, moved here from the private prickledherald-reelkit (Nov 24 2026): a public repo's Actions minutes
+# are free, so renders no longer run out the private repo's monthly minutes. The reelkit code stays private: it is
+# checked out at run time with a read-only deploy key. Because this repo's logs are public, the script is read from
+# the event file (never put in a step's env, which the log prints) and the render's own output goes to a file;
+# only a failure prints its last lines. The finished reel goes straight to the site, never to a public artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      article:
+        description: "Article ID or slug"
+        required: false
+        type: string
+      scenes:
+        description: "Director's script JSON (see SCENES.md in the reelkit)"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  reel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      REEL_FONTS: ${{ github.workspace }}/fonts
+      REEL_FONTSDIR: ${{ github.workspace }}/fonts-flat
+      REEL_NOTO: ${{ github.workspace }}/fonts/noto/NotoColorEmoji.ttf
+      PYTHONUNBUFFERED: "1"
+      REEL_VOICE_CACHE: ${{ github.workspace }}/.voice-cache
+    steps:
+      - name: Get the reelkit (private, read-only key)
+        uses: actions/checkout@v4
+        with:
+          repository: dafitime/prickledherald-reelkit
+          ssh-key: ${{ secrets.REELKIT_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Restore voice cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .voice-cache
+          key: voice-cache-${{ github.run_id }}
+          restore-keys: voice-cache-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: What kind of job
+        id: job
+        run: |
+          python3 - <<'PY'
+          import json, os
+          inp = json.load(open(os.environ["GITHUB_EVENT_PATH"]))["inputs"]
+          t = os.environ["RUNNER_TEMP"]
+          open(f"{t}/scenes.json", "w").write(inp.get("scenes") or "")
+          open(f"{t}/article.txt", "w").write(inp.get("article") or "")
+          s = inp.get("scenes") or ""
+          still = s.startswith('{"preview') or s.startswith('{"carousel')
+          vo = '"voice_preview":"vo' in s
+          with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              o.write(f"still={int(still)}\nvo={int(vo)}\n")
+          PY
+
+      - name: Free disk space (in the background)
+        if: steps.job.outputs.still == '0'
+        run: nohup sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost > /dev/null 2>&1 &
+
+      - name: Cache ffmpeg
+        if: steps.job.outputs.still == '0'
+        uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg-static
+          key: ffmpeg-static-v1
+      - name: ffmpeg
+        if: steps.job.outputs.still == '0'
+        run: |
+          if [ ! -x ~/ffmpeg-static/ffmpeg ]; then
+            mkdir -p ~/ffmpeg-static
+            curl -sSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar -xJ -C ~/ffmpeg-static --strip-components=1
+          fi
+          echo "$HOME/ffmpeg-static" >> "$GITHUB_PATH"
+
+      - name: Python deps
+        run: pip install -q pillow numpy opencv-python-headless
+
+      - name: Render reel
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          PH_API_TOKEN: ${{ secrets.PH_API_TOKEN }}
+        run: |
+          SLUG="scene${GITHUB_RUN_NUMBER}"; LOG="$RUNNER_TEMP/render.log"
+          echo "REEL_SLUG=$SLUG" >> "$GITHUB_ENV"
+          ARGS=(-C "work/$SLUG" --slug "$SLUG" --scenes "@$RUNNER_TEMP/scenes.json")
+          ART="$(cat "$RUNNER_TEMP/article.txt")"; [ -n "$ART" ] && ARGS+=(--article "$ART")
+          {
+            set -e
+            python reelkit.py new "${ARGS[@]}"
+            python reelkit.py voice -C "work/$SLUG"
+            if [ "${{ steps.job.outputs.vo }}" = "1" ]; then python reelkit.py voice-preview -C "work/$SLUG"
+            else python reelkit.py build -C "work/$SLUG"; fi
+          } > "$LOG" 2>&1 || { echo "Render failed. Last lines:"; tail -40 "$LOG"; exit 1; }
+          echo "Rendered."
+
+      - name: Save voice cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .voice-cache
+          key: voice-cache-${{ github.run_id }}
+
+      - name: Deliver to the site (draft reel)
+        if: steps.job.outputs.vo != '1'
+        env:
+          PH_API_TOKEN: ${{ secrets.PH_API_TOKEN }}
+        run: |
+          python reelkit.py deliver -C "work/${REEL_SLUG}" > "$RUNNER_TEMP/deliver.log" 2>&1 || { tail -20 "$RUNNER_TEMP/deliver.log"; exit 1; }
+          echo "Delivered."
+
+      - name: Tell the reel plan the render failed
+        if: failure() && steps.job.outputs.vo != '1'
+        env:
+          PH_API_TOKEN: ${{ secrets.PH_API_TOKEN }}
+        run: python reelkit.py plan-status --scenes "@$RUNNER_TEMP/scenes.json" --status failed --note "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null 2>&1 || true
