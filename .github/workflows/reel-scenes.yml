@@ -58,8 +58,10 @@ jobs:
           open(f"{t}/scenes.json", "w").write(inp.get("scenes") or "")
           open(f"{t}/article.txt", "w").write(inp.get("article") or "")
           s = inp.get("scenes") or ""
-          still = s.startswith('{"preview') or s.startswith('{"carousel')
-          vo = '"voice_preview":"vo' in s
+          try: j = json.loads(s)        # read the JSON itself: spacing in the text decided this before (Nov 24 2026)
+          except Exception: j = {}
+          still = isinstance(j, dict) and ("preview" in j or "carousel" in j)
+          vo = isinstance(j, dict) and str(j.get("voice_preview") or "").startswith("vo")
           with open(os.environ["GITHUB_OUTPUT"], "a") as o:
               o.write(f"still={int(still)}\nvo={int(vo)}\n")
           PY
